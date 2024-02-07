@@ -17,6 +17,13 @@ type rateLimiter struct {
 	mu             sync.Mutex
 }
 
+type LimitCounter interface {
+	Config(requestLimit int, windowLength time.Duration)
+	Inc(key string, currentWindow time.Time) error
+	IncBy(key string, currentWindow time.Time, inc int, amount int) error
+	Get(key string, currentWindow, previousWindow time.Time) (int, int, error)
+}
+
 type localCounter struct {
 	counter      map[uint64]*count
 	windowLength time.Duration
@@ -138,6 +145,8 @@ func (l *rateLimiter) Handler(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+var _ LimitCounter = &localCounter{}
 
 func (c *localCounter) Config(requestLimit int, windowLength time.Duration) {
 	c.mu.Lock()
