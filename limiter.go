@@ -2,6 +2,7 @@ package speedBump
 
 import (
 	"fmt"
+	"github.com/cespare/xxhash/v2"
 	"math"
 	"net/http"
 	"sync"
@@ -25,7 +26,7 @@ type rateLimit struct {
 }
 
 type localCounter struct {
-	counters     map[string]*count
+	counters     map[uint64]*count
 	windowLength time.Duration
 	lastEvict    time.Time
 	mu           sync.Mutex
@@ -36,13 +37,43 @@ type count struct {
 	updatedAt time.Time
 }
 
-//func NewRateLimiter(requestLimit int, windowLength time.Duration, options ...Option) *rateLimit {
-//	return newRateLimiter(requestLimit, windowLength, options...)
-//}
-//
-//func newRateLimiter(requestLimit int, windowLength time.Duration, options ...Option) *rateLimit {
-//
-//}
+func NewRateLimiter(requestLimit int, windowLength time.Duration, options ...Option) *rateLimit {
+	return newRateLimiter(requestLimit, windowLength, options...)
+}
+
+func newRateLimiter(requestLimit int, windowLength time.Duration, options ...Option) *rateLimit {
+	limiter := &rateLimit{
+		requestLimit: requestLimit,
+		windowLength: windowLength,
+	}
+
+	for _, option := range options {
+		option(limiter)
+	}
+
+	if limiter.keyFn == nil {
+		limiter.keyFn = func(r *http.Request) (string, error) {
+			return "*", nil
+		}
+	}
+
+	if limiter.onRequestLimit == nil {
+		limiter.onRequestLimit = func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+		}
+	}
+
+	if limiter.limitCounter == nil {
+		limiter.limitCounter = &localCounter{
+			counters:     make(map[uint64]*count),
+			windowLength: windowLength,
+		}
+	}
+
+	limiter.limitCounter.Config(requestLimit, windowLength)
+
+	return limiter
+}
 
 func (limiter *rateLimit) Status(key string) (bool, float64, error) {
 	t := time.Now().UTC()
@@ -146,6 +177,41 @@ func (l *localCounter) Get(key string, currentWindow time.Time, previousWindow t
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	curr, ok := l.counters[LimitCounterKey(key, currentWindow)]
+	if !ok {
+		curr = &count{value: 0, updatedAt: time.Now()}
+	}
+
+	prev, ok := l.counters[LimitCounterKey(key, previousWindow)]
+	if !ok {
+		prev = &count{value: 0, updatedAt: time.Now()}
+	}
+
+	return curr.value, prev.value, nil
 }
 
-func (l *localCounter) evict() {}
+func (l *localCounter) evict() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	d := l.windowLength * 3
+
+	if time.Since(l.lastEvict) < d {
+		return
+	}
+
+	l.lastEvict = time.Now()
+
+	for k, v := range l.counters {
+		if time.Since(v.updatedAt) > d {
+			delete(l.counters, k)
+		}
+	}
+}
+
+func LimitCounterKey(key string, t time.Time) uint64 {
+	hash := xxhash.New()
+	hash.WriteString(key)
+	hash.WriteString(fmt.Sprintf("%d", t.Unix()))
+	return hash.Sum64()
+}
