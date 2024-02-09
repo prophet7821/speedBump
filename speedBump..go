@@ -7,24 +7,20 @@ import (
 	"time"
 )
 
+type Option func(limiter *rateLimit)
+
 type KeyFunc func(r *http.Request) (string, error)
-type Option func(limiter *rateLimiter)
 
 func Limit(requestLimit int, windowLength time.Duration, options ...Option) func(next http.Handler) http.Handler {
-	return NewRateLimiter(requestLimit, windowLength, options...).Handler
-
+	return NewRateLimiter(requestLimit, windowLength, options...)
 }
 
 func LimitAll(requestLimit int, windowLength time.Duration) func(next http.Handler) http.Handler {
 	return Limit(requestLimit, windowLength)
 }
 
-func LimitByIp(requestLimit int, windowLength time.Duration) func(next http.Handler) http.Handler {
+func LimitByIP(requestLimit int, windowLength time.Duration) func(next http.Handler) http.Handler {
 	return Limit(requestLimit, windowLength, WithKeyFuncs(KeyByIP))
-}
-
-func LimitByEndpoint(requestLimit int, windowLength time.Duration) func(next http.Handler) http.Handler {
-	return Limit(requestLimit, windowLength, WithKeyFuncs(KeyByEndpoint))
 }
 
 func KeyByIP(r *http.Request) (string, error) {
@@ -41,25 +37,32 @@ func KeyByEndpoint(r *http.Request) (string, error) {
 }
 
 func WithKeyFuncs(keyFuncs ...KeyFunc) Option {
-	return func(limiter *rateLimiter) {
+	return func(limiter *rateLimit) {
 		if len(keyFuncs) > 0 {
-			limiter.keyFn = composeKeyFuncs(keyFuncs...)
+			limiter.keyFn = composeKeyFn(keyFuncs...)
 		}
 	}
 }
 
-func composeKeyFuncs(keyFuncs ...KeyFunc) KeyFunc {
+func composeKeyFn(keyFuncs ...KeyFunc) KeyFunc {
 	return func(r *http.Request) (string, error) {
 		var key strings.Builder
-		for _, keyFunc := range keyFuncs {
-			k, err := keyFunc(r)
+		for _, fn := range keyFuncs {
+			k, err := fn(r)
 			if err != nil {
 				return "", err
 			}
+
 			key.WriteString(k)
 			key.WriteRune(':')
 		}
 
 		return key.String(), nil
+	}
+}
+
+func WithLimitHandler(h http.HandlerFunc) Option {
+	return func(limiter *rateLimit) {
+		limiter.onRequestLimit = h
 	}
 }
