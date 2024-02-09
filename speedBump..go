@@ -12,7 +12,7 @@ type Option func(limiter *rateLimit)
 type KeyFunc func(r *http.Request) (string, error)
 
 func Limit(requestLimit int, windowLength time.Duration, options ...Option) func(next http.Handler) http.Handler {
-	return NewRateLimiter(requestLimit, windowLength, options...)
+	return NewRateLimiter(requestLimit, windowLength, options...).Handler
 }
 
 func LimitAll(requestLimit int, windowLength time.Duration) func(next http.Handler) http.Handler {

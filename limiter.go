@@ -1,14 +1,17 @@
 package speedBump
 
 import (
+	"fmt"
+	"math"
 	"net/http"
+	"sync"
 	"time"
 )
 
 type LimitCounter interface {
 	Config(requestLimit int, windowLength time.Duration)
-	Inc(key string, currentWindow time.Time) (int, error)
-	IncBy(key string, currentWindow time.Time, n int) (int, error)
+	Inc(key string, currentWindow time.Time) error
+	IncBy(key string, currentWindow time.Time, n int) error
 	Get(key string, currentWindow time.Time, previousWindow time.Time) (int, int, error)
 }
 
@@ -18,37 +21,131 @@ type rateLimit struct {
 	keyFn          KeyFunc
 	onRequestLimit http.HandlerFunc
 	limitCounter   LimitCounter
+	mu             sync.Mutex
 }
 
 type localCounter struct {
-	counters     map[string]*interface{}
+	counters     map[string]*count
 	windowLength time.Duration
+	lastEvict    time.Time
+	mu           sync.Mutex
 }
 
-func NewRateLimiter(requestLimit int, windowLength time.Duration, options ...Option) *rateLimit {
-	return newRateLimiter(requestLimit, windowLength, options...)
+type count struct {
+	value     int
+	updatedAt time.Time
 }
 
-func newRateLimiter(requestLimit int, windowLength time.Duration, options ...Option) *rateLimit {
-	limiter := &rateLimit{
-		requestLimit: requestLimit,
-		windowLength: windowLength,
+//func NewRateLimiter(requestLimit int, windowLength time.Duration, options ...Option) *rateLimit {
+//	return newRateLimiter(requestLimit, windowLength, options...)
+//}
+//
+//func newRateLimiter(requestLimit int, windowLength time.Duration, options ...Option) *rateLimit {
+//
+//}
+
+func (limiter *rateLimit) Status(key string) (bool, float64, error) {
+	t := time.Now().UTC()
+
+	currentWindow := t.Truncate(limiter.windowLength)
+	previousWindow := currentWindow.Add(-limiter.windowLength)
+
+	currCount, prevCount, err := limiter.limitCounter.Get(key, currentWindow, previousWindow)
+	if err != nil {
+		return false, 0, err
 	}
 
-	for _, option := range options {
-		option(limiter)
+	diff := t.Sub(currentWindow)
+	rate := float64(prevCount)*(float64(limiter.windowLength)-float64(diff))/float64(limiter.windowLength) + float64(currCount)
+
+	if rate > float64(limiter.requestLimit) {
+		return false, rate, nil
 	}
 
-	if limiter.keyFn == nil {
-		limiter.keyFn = func(r *http.Request) (string, error) {
-			return "*", nil
+	return true, rate, nil
+}
+
+func (limiter *rateLimit) Handler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key, err := limiter.keyFn(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusPreconditionRequired)
 		}
+
+		currentWindow := time.Now().UTC().Truncate(limiter.windowLength)
+
+		w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", limiter.requestLimit))
+		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", 0))
+		w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", currentWindow.Add(limiter.windowLength).Unix()))
+
+		_, rate, err := limiter.Status(key)
+
+		limiter.mu.Lock()
+		if err != nil {
+			limiter.mu.Unlock()
+			http.Error(w, err.Error(), http.StatusPreconditionRequired)
+			return
+		}
+
+		nrate := int(math.Round(rate))
+
+		if nrate < limiter.requestLimit {
+			w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", limiter.requestLimit-nrate))
+		}
+
+		if nrate >= limiter.requestLimit {
+			limiter.mu.Unlock()
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(limiter.windowLength.Seconds())))
+			limiter.onRequestLimit(w, r)
+			return
+		}
+
+		err = limiter.limitCounter.Inc(key, currentWindow)
+		if err != nil {
+			limiter.mu.Unlock()
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		limiter.mu.Unlock()
+
+		next.ServeHTTP(w, r)
+	})
+}
+func (l *localCounter) Config(requestLimit int, windowLength time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.windowLength = windowLength
+}
+
+func (l *localCounter) Inc(key string, currentWindow time.Time) error {
+	return l.IncBy(key, currentWindow, 1)
+}
+
+func (l *localCounter) IncBy(key string, currentWindow time.Time, n int) error {
+	l.evict()
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	hkey := LimitCounterKey(key, currentWindow)
+
+	v, ok := l.counters[hkey]
+	if !ok {
+		v = &count{}
+		l.counters[hkey] = v
 	}
 
-	if limiter.limitCounter == nil {
-		limiter.limitCounter = &localCounter{
-			counters:     make(map[string]*counter),
-			windowLength: windowLength,
-		}
-	}
+	v.value += n
+	v.updatedAt = time.Now()
+
+	return nil
 }
+
+func (l *localCounter) Get(key string, currentWindow time.Time, previousWindow time.Time) (int, int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+}
+
+func (l *localCounter) evict() {}
