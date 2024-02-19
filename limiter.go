@@ -10,7 +10,7 @@ import (
 )
 
 type LimitCounter interface {
-	Config(requestLimit int, windowLength time.Duration)
+	Config(windowLength time.Duration)
 	Inc(key string, currentWindow time.Time) error
 	IncBy(key string, currentWindow time.Time, n int) error
 	Get(key string, currentWindow time.Time, previousWindow time.Time) (int, int, error)
@@ -59,7 +59,7 @@ func newRateLimiter(requestLimit int, windowLength time.Duration, options ...Opt
 
 	if limiter.onRequestLimit == nil {
 		limiter.onRequestLimit = func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+			http.Error(w, "Rate limit Exceeded", http.StatusTooManyRequests)
 		}
 	}
 
@@ -69,8 +69,6 @@ func newRateLimiter(requestLimit int, windowLength time.Duration, options ...Opt
 			windowLength: windowLength,
 		}
 	}
-
-	limiter.limitCounter.Config(requestLimit, windowLength)
 
 	return limiter
 }
@@ -143,7 +141,7 @@ func (limiter *rateLimit) Handler(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-func (l *localCounter) Config(requestLimit int, windowLength time.Duration) {
+func (l *localCounter) Config(windowLength time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.windowLength = windowLength

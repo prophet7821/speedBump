@@ -4,7 +4,7 @@ import (
 	"context"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/httprate"
+	"github.com/prophet7821/speedBump.git"
 	"net/http"
 	"time"
 )
@@ -22,15 +22,15 @@ func main() {
 			})
 		})
 
-		r.Use(httprate.Limit(
+		r.Use(speedBump.Limit(
 			0,
 			10*time.Second,
-			httprate.WithKeyFuncs(httprate.KeyByIP, func(r *http.Request) (string, error) {
+			speedBump.WithKeyFuncs(speedBump.KeyByIP, func(r *http.Request) (string, error) {
 				token := r.Context().Value("userID").(string)
 				return token, nil
 			}),
 
-			httprate.WithLimitHandler(func(w http.ResponseWriter, r *http.Request) {
+			speedBump.WithLimitHandler(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusTooManyRequests)
 				_, err := w.Write([]byte(`{"message": "Too many requests"}`))
@@ -50,7 +50,7 @@ func main() {
 	})
 
 	r.Group(func(r chi.Router) {
-		r.Use(httprate.LimitByIP(0, 10*time.Second))
+		r.Use(speedBump.LimitByIP(0, 10*time.Second))
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			_, err := w.Write([]byte("home"))
 			if err != nil {

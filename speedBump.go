@@ -66,3 +66,9 @@ func WithLimitHandler(h http.HandlerFunc) Option {
 		limiter.onRequestLimit = h
 	}
 }
+
+func WithLimitCounter(counter LimitCounter) Option {
+	return func(limiter *rateLimit) {
+		limiter.limitCounter = counter
+	}
+}
