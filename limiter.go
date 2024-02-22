@@ -65,10 +65,11 @@ func newRateLimiter(requestLimit int, windowLength time.Duration, options ...Opt
 
 	if limiter.limitCounter == nil {
 		limiter.limitCounter = &localCounter{
-			counters:     make(map[uint64]*count),
-			windowLength: windowLength,
+			counters: make(map[uint64]*count),
 		}
 	}
+
+	limiter.limitCounter.Config(windowLength)
 
 	return limiter
 }

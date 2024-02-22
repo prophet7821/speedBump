@@ -10,5 +10,4 @@ type Config struct {
 	DBIndex   int
 	MaxIdle   int
 	MaxActive int
-	Disabled  bool
 }

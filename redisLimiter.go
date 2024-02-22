@@ -2,6 +2,7 @@ package speedBump
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/redis/go-redis/v9"
 	"time"
@@ -12,6 +13,7 @@ type redisCounter struct {
 	windowLength time.Duration
 }
 
+// WithRedisLimitCounter FIXME: This function should handle errors gracefully.
 func WithRedisLimitCounter(config *Config) Option {
 	rc, err := NewRedisLimitCounter(config)
 	if err != nil {
@@ -69,63 +71,64 @@ func newRedisClient(config *Config) (*redis.Client, error) {
 
 	status := c.Ping(context.Background())
 	if status == nil || status.Err() != nil {
-		return nil, fmt.Errorf("unable to dial redis %v", status.Err())
+		return nil, fmt.Errorf("speedBump : Unable to dial redis %v", status.Err())
 	}
-
 	return c, nil
 }
 
-func (r redisCounter) Config(windowLength time.Duration) {
+func (r *redisCounter) Config(windowLength time.Duration) {
 	r.windowLength = windowLength
 }
 
-func (r redisCounter) Inc(key string, currentWindow time.Time) error {
+func (r *redisCounter) Inc(key string, currentWindow time.Time) error {
 	return r.IncBy(key, currentWindow, 1)
 }
 
-func (r redisCounter) IncBy(key string, currentWindow time.Time, n int) error {
+func (r *redisCounter) IncBy(key string, currentWindow time.Time, n int) error {
+	if n < 1 {
+		return nil
+	}
 	ctx := context.Background()
 	conn := r.client
-	hkey := LimitCounterKey(key, currentWindow)
+	hkey := limitCounterKey(key, currentWindow)
 
-	cmd := conn.Do(ctx, "INCRBY", hkey, n)
-	if cmd == nil || cmd.Err() != nil {
-		return fmt.Errorf("unable to increment key %s: %v", hkey, cmd.Err())
+	if err := conn.IncrBy(ctx, hkey, int64(n)).Err(); err != nil {
+		return fmt.Errorf("unable to increment key %s: %v", hkey, err)
 	}
 
-	cmd = conn.Do(ctx, "EXPIRE", hkey, r.windowLength.Seconds()*3)
-	if cmd == nil || cmd.Err() != nil {
-		return fmt.Errorf("unable to set expiration for key %s: %v", hkey, cmd.Err())
+	if err := conn.Expire(ctx, hkey, time.Duration(r.windowLength.Seconds()*3)*time.Second).Err(); err != nil {
+		return fmt.Errorf("unable to set expiration for key %s: %v", hkey, err)
 	}
 
 	return nil
 }
 
-func (r redisCounter) Get(key string, currentWindow time.Time, previousWindow time.Time) (int, int, error) {
-	ctx := context.Background()
-	conn := r.client
-	hkey := LimitCounterKey(key, currentWindow)
-
-	cmd := conn.Do(ctx, "GET", hkey)
-	if cmd == nil || cmd.Err() != nil {
-		return 0, 0, fmt.Errorf("unable to get key %s: %v", hkey, cmd.Err())
-	}
-
-	current, err := cmd.Int()
+func (r *redisCounter) Get(key string, currentWindow time.Time, previousWindow time.Time) (int, int, error) {
+	current, err := r.getValue(key, currentWindow)
 	if err != nil {
-		return 0, 0, fmt.Errorf("unable to parse key %s: %v", hkey, err)
+		return 0, 0, err
 	}
 
-	hkey = LimitCounterKey(key, previousWindow)
-	cmd = conn.Do(ctx, "GET", hkey)
-	if cmd == nil || cmd.Err() != nil {
-		return 0, 0, fmt.Errorf("unable to get key %s: %v", hkey, cmd.Err())
-	}
-
-	previous, err := cmd.Int()
+	previous, err := r.getValue(key, previousWindow)
 	if err != nil {
-		return 0, 0, fmt.Errorf("unable to parse key %s: %v", hkey, err)
+		return 0, 0, err
 	}
 
 	return current, previous, nil
+}
+
+func (r *redisCounter) getValue(key string, window time.Time) (int, error) {
+	val, err := r.client.Get(context.Background(), limitCounterKey(key, window)).Int()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+
+	} else if err != nil {
+		return 0, err
+
+	}
+	return val, err
+}
+
+func limitCounterKey(key string, currentWindow time.Time) string {
+	return fmt.Sprintf("speedBump:%d", LimitCounterKey(key, currentWindow))
 }
