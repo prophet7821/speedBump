@@ -17,7 +17,8 @@ type redisCounter struct {
 func WithRedisLimitCounter(config *Config) Option {
 	rc, err := NewRedisLimitCounter(config)
 	if err != nil {
-		panic(err)
+		fmt.Println(err)
+		return WithNoop()
 	}
 
 	return WithLimitCounter(rc)

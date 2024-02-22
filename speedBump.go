@@ -72,3 +72,7 @@ func WithLimitCounter(counter LimitCounter) Option {
 		limiter.limitCounter = counter
 	}
 }
+
+func WithNoop() Option {
+	return func(limiter *rateLimit) {}
+}
