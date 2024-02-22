@@ -59,6 +59,16 @@ func main() {
 		})
 	})
 
+	r.Group(func(r chi.Router) {
+		r.Use(speedBump.Limit(0, 10*time.Second, speedBump.WithRedisLimitCounter(&speedBump.Config{})))
+		r.Get("/redis", func(w http.ResponseWriter, r *http.Request) {
+			_, err := w.Write([]byte("home"))
+			if err != nil {
+				return
+			}
+		})
+	})
+
 	err := http.ListenAndServe(":8080", r)
 	if err != nil {
 		return
