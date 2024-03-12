@@ -15,7 +15,7 @@ unfairly consuming resources.
 ## Installation
 
 ```bash
-go get github.com/prophet7821/speedbump.git
+go get github.com/prophet7821/speedBump.git
 ````
 
 ## Usage
