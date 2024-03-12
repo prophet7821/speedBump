@@ -10,7 +10,7 @@ SpeedBump is a powerful and flexible rate limiting library for Go, designed to p
 from overuse and to ensure equitable resource access across all users. At its core, SpeedBump utilizes Cloudflare's
 sliding window counter algorithm, offering a sophisticated approach to rate limiting that balances fairness and
 efficiency. This method ensures that request limits are enforced smoothly over time, preventing bursts of traffic from
-unfairly consuming resources
+unfairly consuming resources.
 
 ## Installation
 
